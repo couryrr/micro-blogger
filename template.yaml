@@ -1,0 +1,85 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: micro-blogger Sample SAM Template for micro-blogger
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 5
+    MemorySize: 128
+Resources:
+  MicroBloggerAPI:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: Micro blog API
+      StageName: dev
+      OpenApiVersion: "3.0.1"
+      DefinitionBody:
+        "Fn::Transform":
+          Name: "AWS::Include"
+          Parameters:
+            Location: api-spec.yaml
+  BlogCommandQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: BlogCommandQueue
+  BlogDBTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      TableName: BlogEntries
+  CreateMessageSubscriptionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: go1.x
+      FunctionName: "create_message"
+      CodeUri: ./cmd/create_message/
+      Handler: create_message
+      Events:
+        BlogCommandCreateMessageEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt BlogCommandQueue.Arn
+            BatchSize: 10
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BlogDBTable
+  GetMessageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: go1.x
+      FunctionName: "get_message"
+      CodeUri: ./cmd/get_message/
+      Handler: get_message
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref MicroBloggerAPI
+            Path: /message/{message_id}
+            Method: GET
+  SQSIntegrationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: PolicyForAPIGWSQSIntegration
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: "sqs:SendMessage"
+                Resource:
+                  - !GetAtt BlogCommandQueue.Arn
+Outputs:
+  Endpoint:
+    Description: API Gateway Endpoint
+    Value:
+      Fn::Sub: https://${MicroBloggerAPI}.execute-api.${AWS::Region}.amazonaws.com/dev/message
